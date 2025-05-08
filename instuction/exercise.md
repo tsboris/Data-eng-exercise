@@ -81,6 +81,8 @@ To access the Airflow UI, set up port forwarding:
 kubectl port-forward svc/airflow-webserver 8080:8080 --namespace airflow
 ```
 
+You can access the Airflow UI at http://localhost:8080 with username `admin` and password `admin`.
+
 
 #### Part 2: Install MinIO
 
