@@ -128,48 +128,69 @@ def clean_nba_data(**context):
             logger.warning("Could not create player_name - missing required columns")
             df['player_name'] = 'Unknown'
     
-    # 2. Convert heights to metric units
-    # First identify the height column - it might be 'height', 'height_feet', etc.
-    height_column = None
-    possible_height_columns = ['height', 'h', 'height_feet_inches', 'player_height']
+    # 2. Handle height data - check for alternative column names
+    # Map actual column names to our standard names
+    height_mapping = {
+        'height_m': ['height_m', 'h_meters', 'height_meters'],
+        'height_cm': ['height_cm', 'h_cm', 'height_centimeters'],
+        'height_inches': ['height_inches', 'h_in', 'height_in', 'height_inch']
+    }
     
-    for col in possible_height_columns:
-        if col in df.columns:
-            height_column = col
-            break
+    # Initialize standard height columns
+    for standard_col in ['height_m', 'height_cm', 'height_inches']:
+        if standard_col not in df.columns:
+            df[standard_col] = None
     
-    if height_column:
-        logger.info(f"Using '{height_column}' as the height column")
-        
-        # Check the format of the first few values to determine conversion approach
-        sample_heights = df[height_column].dropna().head(5).tolist()
-        logger.info(f"Sample height values: {sample_heights}")
-        
-        # Determine if heights are in feet-inches format (e.g., "6-2") or just inches
-        if any(isinstance(h, str) and '-' in h for h in sample_heights if isinstance(h, str)):
-            # Heights are in feet-inches format
-            df['height_inches'] = df[height_column].apply(
+    # Map height data from actual columns to our standard columns
+    for standard_col, possible_cols in height_mapping.items():
+        # Find the first matching column that exists in the dataframe
+        for col in possible_cols:
+            if col in df.columns and col != standard_col:
+                logger.info(f"Mapping height data from '{col}' to '{standard_col}'")
+                df[standard_col] = df[col]
+                break
+    
+    # If we have height in meters but not in cm, convert
+    if df['height_m'].notna().any() and not df['height_cm'].notna().any():
+        logger.info("Converting height from meters to centimeters")
+        df['height_cm'] = df['height_m'].apply(lambda x: round(x * 100, 1) if pd.notnull(x) else None)
+    
+    # If we have height in cm but not in meters, convert
+    if df['height_cm'].notna().any() and not df['height_m'].notna().any():
+        logger.info("Converting height from centimeters to meters")
+        df['height_m'] = df['height_cm'].apply(lambda x: round(x / 100, 2) if pd.notnull(x) else None)
+    
+    # If we have height in inches but not in meters/cm, convert
+    if df['height_inches'].notna().any() and not df['height_m'].notna().any():
+        logger.info("Converting height from inches to meters and centimeters")
+        df['height_m'] = df['height_inches'].apply(lambda x: round(x * 0.0254, 2) if pd.notnull(x) else None)
+        df['height_cm'] = df['height_inches'].apply(lambda x: round(x * 2.54, 1) if pd.notnull(x) else None)
+    
+    # If we have direct feet-inches format in 'height' column
+    if 'height' in df.columns:
+        # Check if 'height' column has values like '6-2' (feet-inches)
+        has_feet_inches = False
+        sample = df['height'].dropna().head(10)
+        for val in sample:
+            if isinstance(val, str) and '-' in val:
+                has_feet_inches = True
+                break
+                
+        if has_feet_inches:
+            logger.info("Converting feet-inches to meters and centimeters")
+            # Convert feet-inches to inches
+            df['height_inches'] = df['height'].apply(
                 lambda x: int(x.split('-')[0]) * 12 + int(x.split('-')[1]) 
                 if isinstance(x, str) and '-' in x else None
             )
-        elif any(isinstance(h, (int, float)) for h in sample_heights):
-            # Heights might already be in inches
-            df['height_inches'] = df[height_column]
-        else:
-            # Fallback - try to convert to float first
-            try:
-                df['height_inches'] = pd.to_numeric(df[height_column], errors='coerce')
-            except:
-                logger.warning(f"Could not convert {height_column} to numeric values")
-                df['height_inches'] = None
-    else:
-        # If no height column is found, create empty columns
-        logger.warning("No height column found in the dataset")
-        df['height_inches'] = None
+            
+            # Convert inches to meters and cm
+            df['height_m'] = df['height_inches'].apply(lambda x: round(x * 0.0254, 2) if pd.notnull(x) else None)
+            df['height_cm'] = df['height_inches'].apply(lambda x: round(x * 2.54, 1) if pd.notnull(x) else None)
     
-    # Convert to meters and centimeters
-    df['height_m'] = df['height_inches'].apply(lambda x: round(x * 0.0254, 2) if pd.notnull(x) else None)
-    df['height_cm'] = df['height_inches'].apply(lambda x: round(x * 2.54, 1) if pd.notnull(x) else None)
+    # Log the count of valid height data
+    height_count = df['height_m'].notna().sum()
+    logger.info(f"Players with valid height data: {height_count} out of {len(df)}")
     
     # 3. Categorize players by position based on height (only for players with height)
     if df['height_m'].notna().any():
