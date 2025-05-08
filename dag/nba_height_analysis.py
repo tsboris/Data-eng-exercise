@@ -114,45 +114,94 @@ def clean_nba_data(**context):
     df = pd.read_csv(StringIO(raw_data))
     logger.info(f"Downloaded raw data: {len(df)} rows")
     
+    # Print column names to debug
+    logger.info(f"Available columns: {df.columns.tolist()}")
+    
     # 1. Create full player name column
-    df['player_name'] = df['first_name'] + ' ' + df['last_name']
+    if 'first_name' in df.columns and 'last_name' in df.columns:
+        df['player_name'] = df['first_name'] + ' ' + df['last_name']
+    else:
+        # If first_name/last_name not available, try to use name column if it exists
+        if 'name' in df.columns:
+            df['player_name'] = df['name']
+        else:
+            logger.warning("Could not create player_name - missing required columns")
+            df['player_name'] = 'Unknown'
     
     # 2. Convert heights to metric units
-    # First convert height from feet-inches format to inches, then to meters and cm
-    df['height_inches'] = df['height'].apply(lambda x: 
-        int(x.split('-')[0]) * 12 + int(x.split('-')[1]) if isinstance(x, str) and '-' in x else None)
+    # First identify the height column - it might be 'height', 'height_feet', etc.
+    height_column = None
+    possible_height_columns = ['height', 'h', 'height_feet_inches', 'player_height']
     
-    # Convert to meters
+    for col in possible_height_columns:
+        if col in df.columns:
+            height_column = col
+            break
+    
+    if height_column:
+        logger.info(f"Using '{height_column}' as the height column")
+        
+        # Check the format of the first few values to determine conversion approach
+        sample_heights = df[height_column].dropna().head(5).tolist()
+        logger.info(f"Sample height values: {sample_heights}")
+        
+        # Determine if heights are in feet-inches format (e.g., "6-2") or just inches
+        if any(isinstance(h, str) and '-' in h for h in sample_heights if isinstance(h, str)):
+            # Heights are in feet-inches format
+            df['height_inches'] = df[height_column].apply(
+                lambda x: int(x.split('-')[0]) * 12 + int(x.split('-')[1]) 
+                if isinstance(x, str) and '-' in x else None
+            )
+        elif any(isinstance(h, (int, float)) for h in sample_heights):
+            # Heights might already be in inches
+            df['height_inches'] = df[height_column]
+        else:
+            # Fallback - try to convert to float first
+            try:
+                df['height_inches'] = pd.to_numeric(df[height_column], errors='coerce')
+            except:
+                logger.warning(f"Could not convert {height_column} to numeric values")
+                df['height_inches'] = None
+    else:
+        # If no height column is found, create empty columns
+        logger.warning("No height column found in the dataset")
+        df['height_inches'] = None
+    
+    # Convert to meters and centimeters
     df['height_m'] = df['height_inches'].apply(lambda x: round(x * 0.0254, 2) if pd.notnull(x) else None)
-    
-    # Convert to centimeters
     df['height_cm'] = df['height_inches'].apply(lambda x: round(x * 2.54, 1) if pd.notnull(x) else None)
     
-    # 3. Categorize players by position based on height
-    # Define the position categories based on height in meters
-    df['position_category'] = pd.cut(
-        df['height_m'],
-        bins=[0, 1.90, 2.00, 2.10, 3.0],
-        labels=['Point Guard/Shooting Guard', 'Small Forward', 'Power Forward', 'Center']
-    )
+    # 3. Categorize players by position based on height (only for players with height)
+    if df['height_m'].notna().any():
+        df['position_category'] = pd.cut(
+            df['height_m'],
+            bins=[0, 1.90, 2.00, 2.10, 3.0],
+            labels=['Point Guard/Shooting Guard', 'Small Forward', 'Power Forward', 'Center']
+        )
+    else:
+        df['position_category'] = None
     
-    # 4. Sort players by height and reset index
-    df = df.sort_values(by='height_m', ascending=False).reset_index(drop=True)
+    # 4. Sort players by height and reset index (only if we have height data)
+    if df['height_m'].notna().any():
+        df = df.sort_values(by='height_m', ascending=False).reset_index(drop=True)
     
     # 5. Log statistics about tallest and shortest players
-    tallest_player = df.iloc[0]
-    shortest_player = df.iloc[-1]
-    
-    logger.info(f"Tallest player: {tallest_player['player_name']} - {tallest_player['height_m']}m ({tallest_player['height_cm']}cm)")
-    logger.info(f"Shortest player: {shortest_player['player_name']} - {shortest_player['height_m']}m ({shortest_player['height_cm']}cm)")
-    
-    logger.info(f"Average height: {df['height_m'].mean():.2f}m ({df['height_cm'].mean():.1f}cm)")
-    logger.info(f"Median height: {df['height_m'].median():.2f}m ({df['height_cm'].median():.1f}cm)")
-    
-    # Get distribution by position category
-    position_counts = df['position_category'].value_counts()
-    for position, count in position_counts.items():
-        logger.info(f"Position category: {position} - {count} players")
+    if df['height_m'].notna().any():
+        tallest_player = df.loc[df['height_m'].idxmax()]
+        shortest_player = df.loc[df['height_m'].idxmin()]
+        
+        logger.info(f"Tallest player: {tallest_player['player_name']} - {tallest_player['height_m']}m ({tallest_player['height_cm']}cm)")
+        logger.info(f"Shortest player: {shortest_player['player_name']} - {shortest_player['height_m']}m ({shortest_player['height_cm']}cm)")
+        
+        logger.info(f"Average height: {df['height_m'].mean():.2f}m ({df['height_cm'].mean():.1f}cm)")
+        logger.info(f"Median height: {df['height_m'].median():.2f}m ({df['height_cm'].median():.1f}cm)")
+        
+        # Get distribution by position category
+        position_counts = df['position_category'].value_counts()
+        for position, count in position_counts.items():
+            logger.info(f"Position category: {position} - {count} players")
+    else:
+        logger.warning("No height data available for statistics")
     
     # 6. Upload cleaned data to MinIO
     cleaned_key = f'nba/cleaned/nba_heights_cleaned_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
@@ -168,7 +217,7 @@ def clean_nba_data(**context):
     
     # Store the cleaned data path for downstream tasks
     context['ti'].xcom_push(key='cleaned_data_s3_path', value=f"{BUCKET_NAME}/{cleaned_key}")
-    context['ti'].xcom_push(key='position_categories', value=position_counts.to_dict())
+    context['ti'].xcom_push(key='position_categories', value=position_counts.to_dict() if df['height_m'].notna().any() else {})
     context['ti'].xcom_push(key='player_count', value=len(df))
     
     logger.info("NBA data cleaning completed successfully")
