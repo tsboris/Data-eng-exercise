@@ -235,6 +235,21 @@ def analyze_and_visualize_data(**context):
     """
     logger.info("Starting NBA data analysis and visualization")
     
+    # Helper function to convert numpy types to native Python types
+    def convert_numpy_types(obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, (list, tuple)):
+            return [convert_numpy_types(item) for item in obj]
+        elif isinstance(obj, dict):
+            return {key: convert_numpy_types(value) for key, value in obj.items()}
+        else:
+            return obj
+    
     # Get the cleaned data path from the previous task
     ti = context['ti']
     cleaned_data_s3_path = ti.xcom_pull(task_ids='clean_nba_data', key='cleaned_data_s3_path')
@@ -423,22 +438,22 @@ def analyze_and_visualize_data(**context):
         
         if len(valid_heights_m) > 0 and len(valid_heights_cm) > 0:
             height_stats = {
-                'mean_m': round(valid_heights_m.mean(), 2),
-                'mean_cm': round(valid_heights_cm.mean(), 1),
-                'median_m': round(valid_heights_m.median(), 2),
-                'median_cm': round(valid_heights_cm.median(), 1),
-                'min_m': round(valid_heights_m.min(), 2),
-                'min_cm': round(valid_heights_cm.min(), 1),
-                'max_m': round(valid_heights_m.max(), 2),
-                'max_cm': round(valid_heights_cm.max(), 1),
-                'std_m': round(valid_heights_m.std(), 3),
-                'std_cm': round(valid_heights_cm.std(), 1)
+                'mean_m': round(float(valid_heights_m.mean()), 2),
+                'mean_cm': round(float(valid_heights_cm.mean()), 1),
+                'median_m': round(float(valid_heights_m.median()), 2),
+                'median_cm': round(float(valid_heights_cm.median()), 1),
+                'min_m': round(float(valid_heights_m.min()), 2),
+                'min_cm': round(float(valid_heights_cm.min()), 1),
+                'max_m': round(float(valid_heights_m.max()), 2),
+                'max_cm': round(float(valid_heights_cm.max()), 1),
+                'std_m': round(float(valid_heights_m.std()), 3),
+                'std_cm': round(float(valid_heights_cm.std()), 1)
             }
     
     # Create a complete analysis report
     analysis_report = {
-        'total_players': len(df),
-        'players_with_height_data': df['height_m'].notna().sum(),
+        'total_players': int(len(df)),
+        'players_with_height_data': int(df['height_m'].notna().sum()),
         'height_stats': height_stats,
         'position_stats': position_stats_dict,
         'tallest_players': tallest_players,
@@ -453,6 +468,9 @@ def analyze_and_visualize_data(**context):
         },
         'timestamp': datetime.now().isoformat()
     }
+    
+    # Convert any numpy types to native Python types
+    analysis_report = convert_numpy_types(analysis_report)
     
     # 6. Upload analysis results to MinIO
     analysis_key = f'nba/analysis/nba_height_analysis_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
