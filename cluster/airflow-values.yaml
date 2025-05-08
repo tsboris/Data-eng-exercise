@@ -5,7 +5,7 @@ useStandardNaming: true
 dags:
   gitSync:
     enabled: true
-    repo: <git-repo-url>
+    repo: https://github.com/tsboris/data-eng-exercise.git
     branch: main
     rev: HEAD
     depth: 1
