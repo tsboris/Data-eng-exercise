@@ -250,45 +250,86 @@ def analyze_and_visualize_data(**context):
     # Convert to dataframe
     df = pd.read_csv(StringIO(cleaned_data))
     logger.info(f"Downloaded cleaned data: {len(df)} rows")
+    logger.info(f"Available columns: {df.columns.tolist()}")
+    
+    # Check if we have height data
+    if not ('height_m' in df.columns and 'height_cm' in df.columns):
+        logger.warning("Height data columns missing. Analysis will be limited.")
+    
+    has_height_data = ('height_m' in df.columns and df['height_m'].notna().any() and 
+                       'height_cm' in df.columns and df['height_cm'].notna().any())
+    
+    if not has_height_data:
+        logger.warning("No valid height data found. Analysis will be limited.")
     
     # 1. Calculate statistics by position category
-    position_stats = df.groupby('position_category')[['height_m', 'height_cm']].agg([
-        'count', 'mean', 'median', 'min', 'max', 'std'
-    ]).reset_index()
-    
-    # Convert the multi-level column structure to a simpler format
     position_stats_dict = {}
-    for position in position_stats['position_category']:
-        pos_data = position_stats[position_stats['position_category'] == position]
-        position_stats_dict[position] = {
-            'count': int(pos_data[('height_m', 'count')].values[0]),
-            'mean_m': round(float(pos_data[('height_m', 'mean')].values[0]), 2),
-            'mean_cm': round(float(pos_data[('height_cm', 'mean')].values[0]), 1),
-            'median_m': round(float(pos_data[('height_m', 'median')].values[0]), 2),
-            'median_cm': round(float(pos_data[('height_cm', 'median')].values[0]), 1),
-            'min_m': round(float(pos_data[('height_m', 'min')].values[0]), 2),
-            'min_cm': round(float(pos_data[('height_cm', 'min')].values[0]), 1),
-            'max_m': round(float(pos_data[('height_m', 'max')].values[0]), 2),
-            'max_cm': round(float(pos_data[('height_cm', 'max')].values[0]), 1),
-            'std_m': round(float(pos_data[('height_m', 'std')].values[0]), 3),
-            'std_cm': round(float(pos_data[('height_cm', 'std')].values[0]), 1)
-        }
+    
+    if has_height_data and 'position_category' in df.columns and df['position_category'].notna().any():
+        # Filter only rows with valid height data and position category
+        valid_df = df.dropna(subset=['height_m', 'height_cm', 'position_category'])
+        
+        if len(valid_df) > 0:
+            position_stats = valid_df.groupby('position_category')[['height_m', 'height_cm']].agg([
+                'count', 'mean', 'median', 'min', 'max', 'std'
+            ]).reset_index()
+            
+            # Convert the multi-level column structure to a simpler format
+            for position in position_stats['position_category']:
+                pos_data = position_stats[position_stats['position_category'] == position]
+                position_stats_dict[position] = {
+                    'count': int(pos_data[('height_m', 'count')].values[0]),
+                    'mean_m': round(float(pos_data[('height_m', 'mean')].values[0]), 2),
+                    'mean_cm': round(float(pos_data[('height_cm', 'mean')].values[0]), 1),
+                    'median_m': round(float(pos_data[('height_m', 'median')].values[0]), 2),
+                    'median_cm': round(float(pos_data[('height_cm', 'median')].values[0]), 1),
+                    'min_m': round(float(pos_data[('height_m', 'min')].values[0]), 2),
+                    'min_cm': round(float(pos_data[('height_cm', 'min')].values[0]), 1),
+                    'max_m': round(float(pos_data[('height_m', 'max')].values[0]), 2),
+                    'max_cm': round(float(pos_data[('height_cm', 'max')].values[0]), 1),
+                    'std_m': round(float(pos_data[('height_m', 'std')].values[0]), 3),
+                    'std_cm': round(float(pos_data[('height_cm', 'std')].values[0]), 1)
+                }
+        else:
+            logger.warning("No valid data for position statistics")
+    else:
+        logger.warning("Missing required columns for position statistics")
     
     # 2. Generate ASCII-based histogram for player heights distribution
-    # Calculate histogram data
-    hist_data, bin_edges = np.histogram(df['height_cm'].dropna(), bins=10)
-    max_bar_width = 50  # Maximum width of the ASCII bar
-    
-    # Create the ASCII histogram
     ascii_histogram = []
     ascii_histogram.append("Height Distribution Histogram (cm)")
     ascii_histogram.append("=" * 50)
     
-    for i in range(len(hist_data)):
-        bar_width = int((hist_data[i] / max(hist_data)) * max_bar_width)
-        bar = '#' * bar_width
-        bin_range = f"{bin_edges[i]:.1f}-{bin_edges[i+1]:.1f}cm"
-        ascii_histogram.append(f"{bin_range.ljust(15)} | {bar} ({hist_data[i]})")
+    bin_edges = np.array([0])
+    hist_data = np.array([0])
+    
+    if has_height_data:
+        # Get only valid height data for histogram
+        valid_heights = df['height_cm'].dropna()
+        
+        if len(valid_heights) > 0:
+            # Calculate histogram data
+            hist_data, bin_edges = np.histogram(valid_heights, bins=10)
+            max_bar_width = 50  # Maximum width of the ASCII bar
+            
+            # Create the ASCII histogram
+            if len(hist_data) > 0 and np.max(hist_data) > 0:  # Check that we have valid data
+                for i in range(len(hist_data)):
+                    # Handle potential divide by zero or NaN
+                    if np.isnan(hist_data[i]) or np.max(hist_data) == 0:
+                        bar_width = 0
+                    else:
+                        bar_width = int((hist_data[i] / np.max(hist_data)) * max_bar_width)
+                    
+                    bar = '#' * bar_width
+                    bin_range = f"{bin_edges[i]:.1f}-{bin_edges[i+1]:.1f}cm"
+                    ascii_histogram.append(f"{bin_range.ljust(15)} | {bar} ({hist_data[i]})")
+            else:
+                ascii_histogram.append("No valid height data for histogram")
+        else:
+            ascii_histogram.append("No valid height data for histogram")
+    else:
+        ascii_histogram.append("Height data missing - cannot generate histogram")
     
     ascii_histogram_str = '\n'.join(ascii_histogram)
     logger.info(f"Generated ASCII histogram:\n{ascii_histogram_str}")
@@ -298,66 +339,107 @@ def analyze_and_visualize_data(**context):
     box_plots.append("Height Box Plots by Position Category (cm)")
     box_plots.append("=" * 60)
     
-    for position in df['position_category'].dropna().unique():
-        heights = df[df['position_category'] == position]['height_cm'].dropna()
-        if len(heights) == 0:
-            continue
+    if has_height_data and 'position_category' in df.columns and df['position_category'].notna().any():
+        # Check each position category
+        for position in df['position_category'].dropna().unique():
+            heights = df[df['position_category'] == position]['height_cm'].dropna()
             
-        q1, median, q3 = heights.quantile([0.25, 0.5, 0.75])
-        iqr = q3 - q1
-        lower_whisker = max(heights.min(), q1 - 1.5 * iqr)
-        upper_whisker = min(heights.max(), q3 + 1.5 * iqr)
-        
-        # Scale the box plot to fit within a reasonable width
-        scale = 40 / (upper_whisker - lower_whisker + 1)
-        left_pad = int((lower_whisker - heights.min()) * scale)
-        box_start = int((q1 - heights.min()) * scale)
-        median_pos = int((median - heights.min()) * scale)
-        box_end = int((q3 - heights.min()) * scale)
-        right_pad = int((heights.max() - upper_whisker) * scale)
-        
-        # Create the box plot line
-        line = ' ' * left_pad + '|' + '-' * (box_start - left_pad)
-        line += '|' + '-' * (median_pos - box_start) + '+' + '-' * (box_end - median_pos) + '|'
-        line += '-' * (right_pad) + '|'
-        
-        # Add position label and stats
-        box_plots.append(f"{position.ljust(25)} | {heights.min():.1f}cm {'-' * 10} {median:.1f}cm {'-' * 10} {heights.max():.1f}cm")
-        box_plots.append(f"{' ' * 25} | {line}")
-        box_plots.append(f"{' ' * 25} | n={len(heights)}, mean={heights.mean():.1f}cm, std={heights.std():.1f}cm")
-        box_plots.append("-" * 60)
+            if len(heights) < 3:  # Need at least a few data points for a meaningful box plot
+                box_plots.append(f"{position.ljust(25)} | Insufficient data for box plot (n={len(heights)})")
+                continue
+                
+            q1, median, q3 = heights.quantile([0.25, 0.5, 0.75])
+            iqr = q3 - q1
+            lower_whisker = max(heights.min(), q1 - 1.5 * iqr)
+            upper_whisker = min(heights.max(), q3 + 1.5 * iqr)
+            
+            # Ensure we don't divide by zero with a very narrow range
+            plot_range = upper_whisker - lower_whisker
+            if plot_range <= 0:
+                plot_range = 1  # Set a minimum range to avoid division by zero
+            
+            # Scale the box plot to fit within a reasonable width
+            scale = 40 / plot_range
+            
+            # Ensure our calculations don't result in negative indices
+            left_pad = max(0, int((lower_whisker - heights.min()) * scale))
+            box_start = max(0, int((q1 - heights.min()) * scale))
+            median_pos = max(0, int((median - heights.min()) * scale))
+            box_end = max(0, int((q3 - heights.min()) * scale))
+            right_pad = max(0, int((heights.max() - upper_whisker) * scale))
+            
+            # Create the box plot line (with defensive coding)
+            line = ' ' * left_pad + '|' + '-' * max(0, (box_start - left_pad))
+            line += '|' + '-' * max(0, (median_pos - box_start)) + '+' + '-' * max(0, (box_end - median_pos)) + '|'
+            line += '-' * right_pad + '|'
+            
+            # Add position label and stats
+            box_plots.append(f"{position.ljust(25)} | {heights.min():.1f}cm {'-' * 10} {median:.1f}cm {'-' * 10} {heights.max():.1f}cm")
+            box_plots.append(f"{' ' * 25} | {line}")
+            box_plots.append(f"{' ' * 25} | n={len(heights)}, mean={heights.mean():.1f}cm, std={heights.std():.1f}cm")
+            box_plots.append("-" * 60)
+    else:
+        box_plots.append("Position or height data missing - cannot generate box plots")
     
     box_plots_str = '\n'.join(box_plots)
     logger.info(f"Generated box plots:\n{box_plots_str}")
     
     # 4. Identify top 5 tallest and shortest players
-    tallest_players = df.sort_values('height_m', ascending=False).head(5)[['player_name', 'height_m', 'height_cm', 'position_category']].to_dict('records')
-    shortest_players = df.sort_values('height_m').head(5)[['player_name', 'height_m', 'height_cm', 'position_category']].to_dict('records')
+    tallest_players = []
+    shortest_players = []
     
-    # Log the top 5 players
-    logger.info("Top 5 tallest players:")
-    for idx, player in enumerate(tallest_players, 1):
-        logger.info(f"{idx}. {player['player_name']} - {player['height_m']}m ({player['height_cm']}cm) - {player['position_category']}")
-    
-    logger.info("Top 5 shortest players:")
-    for idx, player in enumerate(shortest_players, 1):
-        logger.info(f"{idx}. {player['player_name']} - {player['height_m']}m ({player['height_cm']}cm) - {player['position_category']}")
+    if has_height_data and 'player_name' in df.columns:
+        # Get valid player data (players with name and height)
+        valid_players = df.dropna(subset=['player_name', 'height_m']).copy()
+        
+        if len(valid_players) > 0:
+            # Get top 5 tallest
+            tallest = valid_players.sort_values('height_m', ascending=False).head(min(5, len(valid_players)))
+            tallest_players = tallest[['player_name', 'height_m', 'height_cm', 'position_category']].to_dict('records')
+            
+            # Get top 5 shortest
+            shortest = valid_players.sort_values('height_m').head(min(5, len(valid_players)))
+            shortest_players = shortest[['player_name', 'height_m', 'height_cm', 'position_category']].to_dict('records')
+            
+            # Log the top players
+            logger.info("Top 5 tallest players:")
+            for idx, player in enumerate(tallest_players, 1):
+                logger.info(f"{idx}. {player['player_name']} - {player['height_m']}m ({player['height_cm']}cm)")
+            
+            logger.info("Top 5 shortest players:")
+            for idx, player in enumerate(shortest_players, 1):
+                logger.info(f"{idx}. {player['player_name']} - {player['height_m']}m ({player['height_cm']}cm)")
+        else:
+            logger.warning("No valid player data for top/shortest players list")
+    else:
+        logger.warning("Missing player_name or height_m columns")
     
     # 5. Generate a comprehensive JSON report with all analysis results
+    # Safely calculate basic statistics
+    height_stats = {}
+    if has_height_data:
+        valid_heights_m = df['height_m'].dropna()
+        valid_heights_cm = df['height_cm'].dropna()
+        
+        if len(valid_heights_m) > 0 and len(valid_heights_cm) > 0:
+            height_stats = {
+                'mean_m': round(valid_heights_m.mean(), 2),
+                'mean_cm': round(valid_heights_cm.mean(), 1),
+                'median_m': round(valid_heights_m.median(), 2),
+                'median_cm': round(valid_heights_cm.median(), 1),
+                'min_m': round(valid_heights_m.min(), 2),
+                'min_cm': round(valid_heights_cm.min(), 1),
+                'max_m': round(valid_heights_m.max(), 2),
+                'max_cm': round(valid_heights_cm.max(), 1),
+                'std_m': round(valid_heights_m.std(), 3),
+                'std_cm': round(valid_heights_cm.std(), 1)
+            }
+    
+    # Create a complete analysis report
     analysis_report = {
         'total_players': len(df),
-        'height_stats': {
-            'mean_m': round(df['height_m'].mean(), 2),
-            'mean_cm': round(df['height_cm'].mean(), 1),
-            'median_m': round(df['height_m'].median(), 2),
-            'median_cm': round(df['height_cm'].median(), 1),
-            'min_m': round(df['height_m'].min(), 2),
-            'min_cm': round(df['height_cm'].min(), 1),
-            'max_m': round(df['height_m'].max(), 2),
-            'max_cm': round(df['height_cm'].max(), 1),
-            'std_m': round(df['height_m'].std(), 3),
-            'std_cm': round(df['height_cm'].std(), 1)
-        },
+        'players_with_height_data': df['height_m'].notna().sum(),
+        'height_stats': height_stats,
         'position_stats': position_stats_dict,
         'tallest_players': tallest_players,
         'shortest_players': shortest_players,
@@ -491,6 +573,13 @@ def generate_dashboard(**context):
                 font-size: 14px;
                 line-height: 1.5;
             }}
+            .message {{
+                background-color: #f8d7da;
+                color: #721c24;
+                padding: 10px;
+                border-radius: 5px;
+                margin-bottom: 15px;
+            }}
             @media (max-width: 768px) {{
                 .stats-container {{
                     grid-template-columns: 1fr;
@@ -512,37 +601,84 @@ def generate_dashboard(**context):
         
         <div class="stat-card">
             <h2>Overview</h2>
-            <p>Total players analyzed: <strong>{analysis_data['total_players']}</strong></p>
-            <p>Average height: <strong>{analysis_data['height_stats']['mean_m']}m ({analysis_data['height_stats']['mean_cm']}cm)</strong></p>
-            <p>Tallest player: <strong>{analysis_data['tallest_players'][0]['player_name']} - {analysis_data['tallest_players'][0]['height_m']}m</strong></p>
-            <p>Shortest player: <strong>{analysis_data['shortest_players'][0]['player_name']} - {analysis_data['shortest_players'][0]['height_m']}m</strong></p>
-        </div>
-        
-        <h2>Position Categories</h2>
-        <div class="stats-container">
+            <p>Total players analyzed: <strong>{analysis_data.get('total_players', 'N/A')}</strong></p>
+            <p>Players with height data: <strong>{analysis_data.get('players_with_height_data', 'N/A')}</strong></p>
     """
     
-    # Add position category stats
-    for position, stats in analysis_data['position_stats'].items():
+    # Add height stats if available
+    if 'height_stats' in analysis_data and analysis_data['height_stats']:
+        height_stats = analysis_data['height_stats']
         html_content += f"""
-            <div class="stat-card">
-                <h3>{position}</h3>
-                <p>Players: <strong>{stats['count']}</strong></p>
-                <p>Average height: <strong>{stats['mean_m']}m ({stats['mean_cm']}cm)</strong></p>
-                <p>Height range: <strong>{stats['min_m']}m - {stats['max_m']}m</strong></p>
-            </div>
+            <p>Average height: <strong>{height_stats.get('mean_m', 'N/A')}m ({height_stats.get('mean_cm', 'N/A')}cm)</strong></p>
+        """
+        
+        # Add tallest/shortest player info if available
+        if 'tallest_players' in analysis_data and analysis_data['tallest_players']:
+            tallest = analysis_data['tallest_players'][0]
+            html_content += f"""
+            <p>Tallest player: <strong>{tallest.get('player_name', 'N/A')} - {tallest.get('height_m', 'N/A')}m</strong></p>
+            """
+        else:
+            html_content += """
+            <p>Tallest player: <strong>Data not available</strong></p>
+            """
+            
+        if 'shortest_players' in analysis_data and analysis_data['shortest_players']:
+            shortest = analysis_data['shortest_players'][0]
+            html_content += f"""
+            <p>Shortest player: <strong>{shortest.get('player_name', 'N/A')} - {shortest.get('height_m', 'N/A')}m</strong></p>
+            """
+        else:
+            html_content += """
+            <p>Shortest player: <strong>Data not available</strong></p>
+            """
+    else:
+        html_content += """
+            <p class="message">Height statistics not available</p>
         """
     
     html_content += """
         </div>
+    """
+    
+    # Add position categories if available
+    if 'position_stats' in analysis_data and analysis_data['position_stats']:
+        html_content += """
+        <h2>Position Categories</h2>
+        <div class="stats-container">
+        """
         
+        # Add position category stats
+        for position, stats in analysis_data['position_stats'].items():
+            html_content += f"""
+                <div class="stat-card">
+                    <h3>{position}</h3>
+                    <p>Players: <strong>{stats.get('count', 'N/A')}</strong></p>
+                    <p>Average height: <strong>{stats.get('mean_m', 'N/A')}m ({stats.get('mean_cm', 'N/A')}cm)</strong></p>
+                    <p>Height range: <strong>{stats.get('min_m', 'N/A')}m - {stats.get('max_m', 'N/A')}m</strong></p>
+                </div>
+            """
+        
+        html_content += """
+        </div>
+        """
+    else:
+        html_content += """
+        <div class="stat-card">
+            <h2>Position Categories</h2>
+            <p class="message">Position category data not available</p>
+        </div>
+        """
+    
+    # Add histogram
+    html_content += """
         <div class="visualization">
             <h2>Height Distribution</h2>
             <pre>
     """
     
     # Add ASCII histogram
-    html_content += ascii_histogram
+    html_content += ascii_histogram if ascii_histogram else "Height distribution data not available"
     
     html_content += """
             </pre>
@@ -554,12 +690,16 @@ def generate_dashboard(**context):
     """
     
     # Add box plots
-    html_content += box_plots
+    html_content += box_plots if box_plots else "Box plot data not available"
     
     html_content += """
             </pre>
         </div>
-        
+    """
+    
+    # Add tallest players table if available
+    if 'tallest_players' in analysis_data and analysis_data['tallest_players']:
+        html_content += """
         <h2>Top 5 Tallest Players</h2>
         <div class="visualization">
             <table class="data-table">
@@ -573,25 +713,37 @@ def generate_dashboard(**context):
                     </tr>
                 </thead>
                 <tbody>
-    """
-    
-    # Add tallest players
-    for idx, player in enumerate(analysis_data['tallest_players'], 1):
-        html_content += f"""
-                    <tr>
-                        <td>{idx}</td>
-                        <td>{player['player_name']}</td>
-                        <td>{player['height_m']}</td>
-                        <td>{player['height_cm']}</td>
-                        <td>{player['position_category']}</td>
-                    </tr>
         """
-    
-    html_content += """
+        
+        # Add tallest players
+        for idx, player in enumerate(analysis_data['tallest_players'], 1):
+            position = player.get('position_category', 'N/A')
+            html_content += f"""
+                        <tr>
+                            <td>{idx}</td>
+                            <td>{player.get('player_name', 'N/A')}</td>
+                            <td>{player.get('height_m', 'N/A')}</td>
+                            <td>{player.get('height_cm', 'N/A')}</td>
+                            <td>{position}</td>
+                        </tr>
+            """
+        
+        html_content += """
                 </tbody>
             </table>
         </div>
-        
+        """
+    else:
+        html_content += """
+        <div class="visualization">
+            <h2>Top 5 Tallest Players</h2>
+            <p class="message">Tallest player data not available</p>
+        </div>
+        """
+    
+    # Add shortest players table if available
+    if 'shortest_players' in analysis_data and analysis_data['shortest_players']:
+        html_content += """
         <h2>Top 5 Shortest Players</h2>
         <div class="visualization">
             <table class="data-table">
@@ -605,25 +757,35 @@ def generate_dashboard(**context):
                     </tr>
                 </thead>
                 <tbody>
-    """
-    
-    # Add shortest players
-    for idx, player in enumerate(analysis_data['shortest_players'], 1):
-        html_content += f"""
-                    <tr>
-                        <td>{idx}</td>
-                        <td>{player['player_name']}</td>
-                        <td>{player['height_m']}</td>
-                        <td>{player['height_cm']}</td>
-                        <td>{player['position_category']}</td>
-                    </tr>
         """
-    
-    html_content += """
+        
+        # Add shortest players
+        for idx, player in enumerate(analysis_data['shortest_players'], 1):
+            position = player.get('position_category', 'N/A')
+            html_content += f"""
+                        <tr>
+                            <td>{idx}</td>
+                            <td>{player.get('player_name', 'N/A')}</td>
+                            <td>{player.get('height_m', 'N/A')}</td>
+                            <td>{player.get('height_cm', 'N/A')}</td>
+                            <td>{position}</td>
+                        </tr>
+            """
+        
+        html_content += """
                 </tbody>
             </table>
         </div>
-        
+        """
+    else:
+        html_content += """
+        <div class="visualization">
+            <h2>Top 5 Shortest Players</h2>
+            <p class="message">Shortest player data not available</p>
+        </div>
+        """
+    
+    html_content += """
         <div class="footer">
             <p>NBA Player Height Analysis - Data Engineering Pipeline Workshop</p>
         </div>
