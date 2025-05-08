@@ -1,0 +1,27 @@
+executor: "KubernetesExecutor"
+statsd:
+  enabled: false
+useStandardNaming: true
+dags:
+  gitSync:
+    enabled: true
+    repo: <git-repo-url>
+    branch: main
+    rev: HEAD
+    depth: 1
+    subPath: dag
+    # credentialsSecret: git-credentials
+    period: 5s
+triggerer:
+  enabled: true
+  persistence:
+    enabled: true
+    size: 10Gi
+    # Execute init container to chown log directory.
+    # This is currently only needed in kind, due to usage
+    # of local-path provisioner.
+    fixPermissions: true
+logs:
+  persistence:
+    enabled: true
+    existingClaim: "airflow-logs"
